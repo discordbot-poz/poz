@@ -16,6 +16,18 @@
     {
       "matchDepTypes": ["dependencies", "require"],
       "labels": ["dependencies", "semver:patch"]
+    },
+    {
+      "packageRules": [
+        {
+          "groupName": "Twilight",
+          "matchPackagePrefixes": ["twilight-"]
+        },
+        {
+          "groupName": "Serde",
+          "matchPackagePrefixes": ["serde"]
+        }
+      ]
     }
   ]
 }
