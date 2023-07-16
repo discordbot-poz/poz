@@ -59,7 +59,7 @@ jobs:
         uses: taiki-e/install-action@ce314215ece9003c778f56d08087274224f66c8f # v2.12.11
         with:
           tool: cross
-      - run: ${{ (matrix.use-cross) && 'cross' || 'cargo' }} build --locked --release --target ${{ matrix.target }}
+      - run: ${{ (matrix.use-cross) && 'cross' || 'cargo' }} build --locked --release --no-default-features --features webpki --target ${{ matrix.target }}
       - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v3.1.2
         with:
           name: ${{ matrix.target }}

@@ -1,4 +1,4 @@
-#[cfg(debug_assertions)]
+#[cfg(feature = "dotenv")]
 use dotenvy::dotenv;
 
 use std::{env, error::Error, sync::Arc};
@@ -9,7 +9,7 @@ use twilight_model::gateway::Intents;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "dotenv")]
     dotenv().expect(".env file not found");
 
     // Initialize the tracing subscriber.

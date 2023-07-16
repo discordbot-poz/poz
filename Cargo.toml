@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "=1.0.71"
-dotenvy = "=0.15.7"
+anyhow = "=1.0.72"
+dotenvy = { optional = true, version = "=0.15.7" }
 tokio = { version = "=1.29.1", features = ["full"] }
 tracing = "=0.1.37"
 tracing-subscriber = "=0.3.17"
@@ -17,4 +17,9 @@ twilight-http = "=0.15.2"
 twilight-model = "=0.15.2"
 
 [features]
-default = ["twilight-gateway/rustls-webpki-roots", "twilight-http/rustls-webpki-roots"]
+default = ["dotenv"]
+dotenv = ["dep:dotenvy"]
+webpki = [
+  "twilight-gateway/rustls-webpki-roots",
+  "twilight-http/rustls-webpki-roots",
+]
