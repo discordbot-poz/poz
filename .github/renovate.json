@@ -8,6 +8,7 @@
     ":maintainLockFilesWeekly",
     ":labels(dependencies, semver:none)",
     ":assignAndReview(kazukazu123123)",
+    ":automergeAll",
     ":semanticCommits",
     ":disablePrControls",
     "helpers:pinGitHubActionDigests"
