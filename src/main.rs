@@ -4,10 +4,32 @@ use dotenvy::dotenv;
 use libvoicetext_api::{self, ApiOptions, AudioFormat};
 use twilight_util::builder::embed::EmbedBuilder;
 
-use std::{env, error::Error, sync::Arc, time::Duration};
+use futures::StreamExt;
+use songbird::{
+    input::Compose,
+    shards::TwilightMap,
+    tracks::{PlayMode, TrackHandle},
+    Songbird,
+};
+use std::{
+    collections::HashMap, env, error::Error, future::Future, num::NonZeroU64, rc::Rc, sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    sync::{watch, Mutex, RwLock},
+    task::JoinSet,
+};
 use twilight_cache_inmemory::{InMemoryCache, ResourceType};
-use twilight_gateway::{Config, Event, Shard, ShardId};
+use twilight_gateway::{
+    stream::{self, ShardEventStream},
+    CloseFrame, Config, Event, Shard, ShardId,
+};
 use twilight_http::Client as HttpClient;
+use twilight_model::{
+    channel::Message,
+    gateway::payload::incoming::MessageCreate,
+    id::{marker::GuildMarker, Id},
+};
 use twilight_model::{
     gateway::{
         payload::outgoing::update_presence::UpdatePresencePayload,
@@ -16,6 +38,15 @@ use twilight_model::{
     },
     http::attachment::Attachment,
 };
+use twilight_standby::Standby;
+
+#[derive(Debug)]
+struct StateRef {
+    http: Arc<HttpClient>,
+    trackdata: RwLock<HashMap<Id<GuildMarker>, TrackHandle>>,
+    songbird: Songbird,
+    standby: Standby,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,9 +58,14 @@ async fn main() -> anyhow::Result<()> {
 
     let token = env::var("DISCORD_TOKEN")?;
 
+    // HTTP is separate from the gateway, so create a new client.
+    let http = Arc::new(HttpClient::new(token.clone()));
+
+    let user_id = http.current_user().await?.model().await?.id;
+
     let config = Config::builder(
         token.clone(),
-        Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT,
+        Intents::GUILD_MESSAGES | Intents::GUILD_VOICE_STATES | Intents::MESSAGE_CONTENT,
     )
     .presence(UpdatePresencePayload::new(
         vec![MinimalActivity {
@@ -44,18 +80,28 @@ async fn main() -> anyhow::Result<()> {
     )?)
     .build();
 
-    // Use intents to only receive guild message events.
     let mut shard = Shard::with_config(ShardId::ONE, config);
 
-    // HTTP is separate from the gateway, so create a new client.
-    let http = Arc::new(HttpClient::new(token));
+    let (tx, rx) = watch::channel(false);
+
+    //let mut set = JoinSet::new();
+
+    let senders = TwilightMap::new(HashMap::from([(shard.id().number(), shard.sender())]));
+
+    let songbird = Songbird::twilight(Arc::new(senders), user_id);
+
+    let state = Arc::new(StateRef {
+        http,
+        trackdata: Default::default(),
+        songbird,
+        standby: Standby::new(),
+    });
 
     // Since we only care about new messages, make the cache only
     // cache new messages.
     let cache = InMemoryCache::builder()
         .resource_types(ResourceType::MESSAGE)
         .build();
-
     // Process each event as they come in.
     loop {
         let event = match shard.next_event().await {
@@ -71,10 +117,11 @@ async fn main() -> anyhow::Result<()> {
             }
         };
 
+        tracing::debug!(?event, shard = ?shard.id(), "received event");
         // Update the cache with the event.
         cache.update(&event);
 
-        tokio::spawn(handle_event(event, Arc::clone(&http)));
+        tokio::spawn(handle_event(event, Arc::clone(&state)));
     }
 
     Ok(())
@@ -82,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn handle_event(
     event: Event,
-    http: Arc<HttpClient>,
+    state: Arc<StateRef>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     match event {
         Event::Ready(ready) => {
@@ -90,7 +137,7 @@ async fn handle_event(
         }
         Event::MessageCreate(msg) => {
             if msg.content == "!ping" {
-                http.create_message(msg.channel_id)
+                state.http.create_message(msg.channel_id)
                     .content("Pong!")?
                     .await?;
             }
@@ -107,7 +154,7 @@ async fn handle_event(
                 .await
                 {
                     Ok(audio_data) => {
-                        http.create_message(msg.channel_id)
+                        state.http.create_message(msg.channel_id)
                             .content("test!")?
                             .attachments(&[Attachment::from_bytes(
                                 "test.ogg".to_owned(),
@@ -141,7 +188,7 @@ async fn handle_event(
                             builder.build()
                         };
 
-                        http.create_message(msg.channel_id)
+                        state.http.create_message(msg.channel_id)
                             .embeds(&[error_message])?
                             .await?;
                     }

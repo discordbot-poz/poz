@@ -8,7 +8,9 @@ edition = "2021"
 [dependencies]
 anyhow = "=1.0.72"
 dotenvy = { optional = true, version = "=0.15.7" }
+futures = "=0.3.28"
 libvoicetext-api = { git = "https://github.com/kazukazu123123/libvoicetext-api", rev = "522d209" }
+songbird = { version = "=0.3.2", default-features = false, features = ["driver", "gateway", "twilight", "rustls"] }
 tokio = { version = "=1.29.1", features = ["full"] }
 tracing = "=0.1.37"
 tracing-subscriber = "=0.3.17"
@@ -16,7 +18,12 @@ twilight-cache-inmemory = "=0.15.2"
 twilight-gateway = "=0.15.2"
 twilight-http = "=0.15.2"
 twilight-model = "=0.15.2"
+twilight-standby = "0.15.2"
 twilight-util = { version = "=0.15.2", features = ["builder"] }
+
+[patch.crates-io.songbird]
+git = "https://github.com/serenity-rs/songbird"
+rev = "4fe2378"
 
 [features]
 default = ["dotenv"]
