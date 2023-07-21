@@ -99,9 +99,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Since we only care about new messages, make the cache only
     // cache new messages.
-    let cache = InMemoryCache::builder()
-        .resource_types(ResourceType::MESSAGE)
-        .build();
+    let cache = Arc::new(
+        InMemoryCache::builder()
+            .resource_types(ResourceType::MESSAGE)
+            .resource_types(ResourceType::VOICE_STATE)
+            .build(),
+    );
     // Process each event as they come in.
     loop {
         let event = match shard.next_event().await {
@@ -121,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
         // Update the cache with the event.
         cache.update(&event);
 
-        tokio::spawn(handle_event(event, Arc::clone(&state)));
+        tokio::spawn(handle_event(event, Arc::clone(&state), Arc::clone(&cache)));
     }
 
     Ok(())
@@ -130,6 +133,7 @@ async fn main() -> anyhow::Result<()> {
 async fn handle_event(
     event: Event,
     state: Arc<StateRef>,
+    cache: Arc<InMemoryCache>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     match event {
         Event::Ready(ready) => {
@@ -137,7 +141,38 @@ async fn handle_event(
         }
         Event::MessageCreate(msg) => {
             if msg.content == "!ping" {
-                state.http.create_message(msg.channel_id)
+                state
+                    .http
+                    .create_message(msg.channel_id)
+                    .content("Pong!")?
+                    .await?;
+            }
+            if msg.content.starts_with("!join") {
+                let guild_id = msg.guild_id.ok_or("Can't join a non-guild channel.")?;
+                let channel_id = NonZeroU64::new(1001440920299905096)
+                    .ok_or("Joined voice channel must have nonzero ID.")?;
+
+                let content = match state.songbird.join(guild_id, channel_id).await {
+                    Ok(_handle) => format!("Joined <#{}>!", channel_id),
+                    Err(e) => format!("Failed to join <#{}>! Why: {:?}", channel_id, e),
+                };
+
+                state
+                    .http
+                    .create_message(msg.channel_id)
+                    .content(&content)?
+                    .await?;
+
+                let Some(guild_id) = msg.guild_id else {
+                    return Ok(());
+                };
+                let member = cache.guild_voice_states(guild_id);
+                println!("{:#?}", member);
+            }
+            if msg.content == "!leave" {
+                state
+                    .http
+                    .create_message(msg.channel_id)
                     .content("Pong!")?
                     .await?;
             }
@@ -154,7 +189,9 @@ async fn handle_event(
                 .await
                 {
                     Ok(audio_data) => {
-                        state.http.create_message(msg.channel_id)
+                        state
+                            .http
+                            .create_message(msg.channel_id)
                             .content("test!")?
                             .attachments(&[Attachment::from_bytes(
                                 "test.ogg".to_owned(),
@@ -188,7 +225,9 @@ async fn handle_event(
                             builder.build()
                         };
 
-                        state.http.create_message(msg.channel_id)
+                        state
+                            .http
+                            .create_message(msg.channel_id)
                             .embeds(&[error_message])?
                             .await?;
                     }

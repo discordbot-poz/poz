@@ -23,7 +23,7 @@ twilight-util = { version = "=0.15.2", features = ["builder"] }
 
 [patch.crates-io.songbird]
 git = "https://github.com/serenity-rs/songbird"
-rev = "4fe2378"
+rev = "da3706c"
 
 [features]
 default = ["dotenv"]
