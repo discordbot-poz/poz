@@ -42,7 +42,7 @@ jobs:
     steps:
       - name: Create published label
         run: |
-          gh label create 'autorelease: published test test' --color=EDEDED || :
+          gh label create 'autorelease: published' --color=EDEDED || :
       - name: Get PR number
         id: pr-number
         run: |
