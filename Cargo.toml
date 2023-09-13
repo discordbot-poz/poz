@@ -6,24 +6,31 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "=1.0.72"
+anyhow = "=1.0.75"
+console-subscriber = "0.1.10"
+ctrlc = "=3.4.1"
 dotenvy = { optional = true, version = "=0.15.7" }
 futures = "=0.3.28"
-libvoicetext-api = { git = "https://github.com/kazukazu123123/libvoicetext-api", rev = "522d209" }
+libvoicetext-api = { git = "https://github.com/kazukazu123123/libvoicetext-api", rev = "a664086" }
 songbird = { version = "=0.3.2", default-features = false, features = ["driver", "gateway", "twilight", "rustls"] }
-tokio = { version = "=1.29.1", features = ["full"] }
+tokio = { version = "=1.32.0", features = ["full"] }
 tracing = "=0.1.37"
 tracing-subscriber = "=0.3.17"
-twilight-cache-inmemory = "=0.15.2"
-twilight-gateway = "=0.15.2"
-twilight-http = "=0.15.2"
-twilight-model = "=0.15.2"
-twilight-standby = "0.15.2"
-twilight-util = { version = "=0.15.2", features = ["builder"] }
+twilight-cache-inmemory = "=0.15.4"
+twilight-gateway = "=0.15.4"
+twilight-http = "=0.15.4"
+twilight-model = "=0.15.4"
+twilight-standby = "=0.15.4"
+twilight-util = { version = "=0.15.4", features = ["builder"] }
+
+symphonia = "=0.5.3"
+
+[profile.dev.package.'*']
+opt-level = 3
 
 [patch.crates-io.songbird]
 git = "https://github.com/serenity-rs/songbird"
-rev = "da3706c"
+rev = "efe2a0b6d5d0e01685334c0cac05bb4bbbf0c32d"
 
 [features]
 default = ["dotenv"]

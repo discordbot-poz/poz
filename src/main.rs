@@ -2,41 +2,36 @@
 use dotenvy::dotenv;
 
 use libvoicetext_api::{self, ApiOptions, AudioFormat};
+use tracing_subscriber::{
+    filter::LevelFilter, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
+    EnvFilter,
+};
 use twilight_util::builder::embed::EmbedBuilder;
 
-use futures::StreamExt;
+use tracing_subscriber::Layer;
+
 use songbird::{
-    input::Compose,
     shards::TwilightMap,
-    tracks::{PlayMode, TrackHandle},
+    tracks::TrackHandle,
     Songbird,
 };
 use std::{
-    collections::HashMap, env, error::Error, future::Future, num::NonZeroU64, rc::Rc, sync::Arc,
-    time::Duration,
+    collections::HashMap, env, error::Error, num::NonZeroU64, sync::Arc,
+    time::Duration, ops::Deref,
 };
-use tokio::{
-    sync::{watch, Mutex, RwLock},
-    task::JoinSet,
-};
+use tokio::sync::{watch, RwLock};
 use twilight_cache_inmemory::{InMemoryCache, ResourceType};
 use twilight_gateway::{
-    stream::{self, ShardEventStream},
-    CloseFrame, Config, Event, Shard, ShardId,
+    Config, Event, Shard, ShardId,
 };
 use twilight_http::Client as HttpClient;
-use twilight_model::{
-    channel::Message,
-    gateway::payload::incoming::MessageCreate,
-    id::{marker::GuildMarker, Id},
-};
 use twilight_model::{
     gateway::{
         payload::outgoing::update_presence::UpdatePresencePayload,
         presence::{ActivityType, MinimalActivity, Status},
         Intents,
     },
-    http::attachment::Attachment,
+    http::attachment::Attachment, id::{Id, marker::GuildMarker},
 };
 use twilight_standby::Standby;
 
@@ -48,13 +43,35 @@ struct StateRef {
     standby: Standby,
 }
 
+fn tracing_init() {
+    // tracing_subscriber::fmt::init();
+    let fmt_layer = tracing_subscriber::fmt::layer().compact().with_filter(
+        EnvFilter::builder()
+            .with_default_directive(
+                match cfg!(debug_assertions) {
+                    true => LevelFilter::DEBUG,
+                    false => LevelFilter::INFO,
+                }
+                .into(),
+            )
+            .from_env_lossy(),
+    );
+
+    let tokio_console_layer = console_subscriber::spawn();
+
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(tokio_console_layer)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "dotenv")]
     dotenv().expect(".env file not found");
 
     // Initialize the tracing subscriber.
-    tracing_subscriber::fmt::init();
+    tracing_init();
 
     let token = env::var("DISCORD_TOKEN")?;
 
@@ -82,7 +99,11 @@ async fn main() -> anyhow::Result<()> {
 
     let mut shard = Shard::with_config(ShardId::ONE, config);
 
-    let (tx, rx) = watch::channel(false);
+    ctrlc::set_handler(move || {
+        std::process::exit(0);
+    }).expect("Error setting Ctrl-C handler");
+
+    let (_tx, _rx) = watch::channel(false);
 
     //let mut set = JoinSet::new();
 
@@ -135,19 +156,29 @@ async fn handle_event(
     state: Arc<StateRef>,
     cache: Arc<InMemoryCache>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    match event {
+    let event = Arc::new(event);
+
+    tokio::spawn({
+        let state = Arc::clone(&state);
+        let event = Arc::clone(&event);
+        async move {
+            state.songbird.process(&event).await;
+        }
+    });
+
+    match event.deref() {
         Event::Ready(ready) => {
             println!("Ready as: {}", ready.user.name);
         }
-        Event::MessageCreate(msg) => {
-            if msg.content == "!ping" {
+        Event::MessageCreate(msg) => match msg.content.as_str() {
+            "!ping" => {
                 state
                     .http
                     .create_message(msg.channel_id)
                     .content("Pong!")?
                     .await?;
             }
-            if msg.content.starts_with("!join") {
+            "!join" => {
                 let guild_id = msg.guild_id.ok_or("Can't join a non-guild channel.")?;
                 let channel_id = NonZeroU64::new(1001440920299905096)
                     .ok_or("Joined voice channel must have nonzero ID.")?;
@@ -163,31 +194,28 @@ async fn handle_event(
                     .content(&content)?
                     .await?;
 
-                let Some(guild_id) = msg.guild_id else {
-                    return Ok(());
-                };
                 let member = cache.guild_voice_states(guild_id);
-                println!("{:#?}", member);
+                tracing::trace!(?member);
             }
-            if msg.content == "!leave" {
+            "!leave" => {
                 state
                     .http
                     .create_message(msg.channel_id)
                     .content("Pong!")?
                     .await?;
             }
-            if msg.content == "!test" {
-                match libvoicetext_api::get_audio_data(
+            "!test" => {
+                let response = libvoicetext_api::get_audio_data(
                     env::var("VOICETEXT_API").unwrap(),
                     ApiOptions {
                         text: "テスト".to_owned(),
                         format: Some(AudioFormat::Ogg),
                         ..Default::default()
                     },
-                    Duration::from_millis(1000),
-                )
-                .await
-                {
+                    Duration::from_secs(1),
+                ).await;
+
+                match response {
                     Ok(audio_data) => {
                         state
                             .http
@@ -195,7 +223,7 @@ async fn handle_event(
                             .content("test!")?
                             .attachments(&[Attachment::from_bytes(
                                 "test.ogg".to_owned(),
-                                audio_data,
+                                audio_data.to_vec(),
                                 1,
                             )])
                             .unwrap()
@@ -203,38 +231,33 @@ async fn handle_event(
                             .unwrap();
                     }
                     Err(err) => {
-                        let error_message = {
-                            let mut builder = EmbedBuilder::new().color(0xff0000);
+                        let error_embed = {
+                            let builder = EmbedBuilder::new().color(0xff0000);
 
                             match err.status() {
                                 Some(status) => {
-                                    builder =
-                                        builder.title("APIリクエストエラー").description(format!(
-                                            "{}: {}",
-                                            status.as_u16(),
-                                            status
-                                                .canonical_reason()
-                                                .unwrap_or("<unknown status code>")
-                                        ));
+                                    builder.title("APIリクエストエラー").description(format!(
+                                        "{}: {}",
+                                        status.as_u16(),
+                                        status
+                                            .canonical_reason()
+                                            .unwrap_or("<unknown status code>")
+                                    ))
                                 }
-                                None => {
-                                    builder = builder.title("APIのリクエストに失敗しました。");
-                                }
-                            }
-
-                            builder.build()
+                                None => builder.title("APIのリクエストに失敗しました。")
+                            }.build()
                         };
 
                         state
                             .http
                             .create_message(msg.channel_id)
-                            .embeds(&[error_message])?
+                            .embeds(&[error_embed])?
                             .await?;
                     }
                 }
             }
+            _ => {}
         }
-        // Other events here...
         _ => {}
     }
 
